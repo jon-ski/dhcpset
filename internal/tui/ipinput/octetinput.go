@@ -2,6 +2,7 @@ package ipinput
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 
 	"github.com/charmbracelet/bubbles/cursor"
@@ -47,12 +48,15 @@ func (o *OctetInput) Focused() bool {
 	return o.input.Focused()
 }
 
-func (o *OctetInput) Value() int {
-	v, err := strconv.Atoi(o.input.Value())
+func (o *OctetInput) Value() uint8 {
+	v, err := strconv.ParseUint(o.input.Value(), 10, 8)
 	if err != nil {
 		return 0
 	}
-	return v
+	if v > math.MaxUint8 {
+		v = math.MaxUint8
+	}
+	return uint8(v)
 }
 
 func (o OctetInput) Init() tea.Cmd {
