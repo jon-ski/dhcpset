@@ -173,7 +173,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-const titleText = `
+const _ = `
 ██████╗ ██╗  ██╗ ██████╗██████╗ ███████╗███████╗████████╗
 ██╔══██╗██║  ██║██╔════╝██╔══██╗██╔════╝██╔════╝╚══██╔══╝
 ██║  ██║███████║██║     ██████╔╝███████╗█████╗     ██║   
@@ -181,12 +181,19 @@ const titleText = `
 ██████╔╝██║  ██║╚██████╗██║     ███████║███████╗   ██║   
 ╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚═╝     ╚══════╝╚══════╝   ╚═╝   
 `
+const titleText = "DHCPSET"
+const subtitleText = "Petty open source alternative to bootp IP setters"
 
-var titleStyle = lipgloss.NewStyle()
+var titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+var subtitleStyle = lipgloss.NewStyle().Faint(true)
+
+var hline = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, false, true, false)
 var listenStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder())
 
 func (m model) View() string {
-	header := lipgloss.PlaceHorizontal(m.window.width, lipgloss.Center, titleStyle.Render(titleText)) + "\n"
+	header := titleStyle.Render(titleText) + "\n"
+	header += subtitleStyle.Render(subtitleText)
+	header += hline.Width(m.window.width).Render("") + "\n"
 
 	var s string
 	switch m.state {
