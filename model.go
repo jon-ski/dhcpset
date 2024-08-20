@@ -94,6 +94,12 @@ func (m model) UpdateMACListener(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case discoverInfo:
 		log.Debug("msg: discoverInfo")
+		for i := range m.lModel.list {
+			if m.lModel.list[i].hwaddr.String() == msg.hwaddr.String() {
+				m.lModel.list[i] = msg
+				return m, m.getMac()
+			}
+		}
 		m.lModel.list = append(m.lModel.list, msg)
 		return m, m.getMac()
 	}

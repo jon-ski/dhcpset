@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -161,6 +162,15 @@ func main() {
 type discoverInfo struct {
 	hwaddr net.HardwareAddr
 	xid    uint32
+	tstamp time.Time
+}
+
+func newDiscoverInfo(hwaddr net.HardwareAddr, xid uint32) discoverInfo {
+	return discoverInfo{
+		hwaddr: hwaddr,
+		xid:    xid,
+		tstamp: time.Now(),
+	}
 }
 
 func sniffMacs(s *dhcp.Server, stop chan struct{}) chan discoverInfo {
@@ -181,7 +191,7 @@ func sniffMacs(s *dhcp.Server, stop chan struct{}) chan discoverInfo {
 				continue
 			}
 			log.Debugf("new MAC: %v", mac)
-			info <- discoverInfo{mac, xid}
+			info <- newDiscoverInfo(mac, xid)
 
 			// // Test Code
 			// log.Debug("sending test MAC")
