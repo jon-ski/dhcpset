@@ -219,7 +219,7 @@ const _ = `
 ╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚═╝     ╚══════╝╚══════╝   ╚═╝   
 `
 const titleText = "DHCPSET"
-const subtitleText = "Petty open source alternative to bootp IP setters"
+const subtitleText = "Single device DHCP IP setter"
 
 var titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
 var subtitleStyle = lipgloss.NewStyle().Faint(true)
