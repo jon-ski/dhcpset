@@ -178,6 +178,16 @@ func (p *Pkt) PrintName() string {
 	return "unknown"
 }
 
+func (p *Pkt) SetCHAddr(addr net.HardwareAddr) {
+	// Set the length of the hardware address
+	if len(addr) > 16 {
+		p.Header.HLen = 16
+		addr = addr[:16]
+	}
+	p.Header.HLen = uint8(len(addr))
+	copy(p.Header.CHAddr[:], addr)
+}
+
 func (o *Options) Add(opt Option) {
 	o.Options = append(o.Options, opt)
 }

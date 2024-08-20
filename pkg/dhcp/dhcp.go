@@ -84,8 +84,7 @@ func (s *Server) newOffer(hwAddr net.HardwareAddr, ip net.IP, xid uint32) *pkt.P
 	req.Header.OpCode = 0x02
 	req.Header.XID = xid
 	req.Header.YIAddr = [4]byte(ip.To4())
-	copy(req.Header.CHAddr[:], hwAddr)
-	// req.Header.CHAddr = [16]byte(hwAddr)
+	req.SetCHAddr(hwAddr)
 	req.Options.Add(pkt.NewOptionMessageType(pkt.MessageTypeOffer))
 	req.Options.Add(pkt.NewOptionServerID(s.addr.To4()))
 	req.Options.Add(pkt.NewOptionSubnetMask(net.IPv4Mask(255, 255, 255, 0)))
