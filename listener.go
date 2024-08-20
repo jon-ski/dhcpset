@@ -67,7 +67,8 @@ func (m listenModel) Update(msg tea.Msg) (listenModel, tea.Cmd) {
 func (m listenModel) ListEnumerator() list.Enumerator {
 	return func(l list.Items, i int) string {
 		if m.selection == i {
-			return "Use →"
+			// return "Use →"
+			return "→"
 		}
 		return ""
 	}
@@ -78,9 +79,10 @@ func (m listenModel) ViewItem(i int) string {
 		return ""
 	}
 	return fmt.Sprintf(
-		"%s %08x",
+		"%17s | %08x | %s",
 		m.list[i].hwaddr.String(),
 		m.list[i].xid,
+		m.list[i].tstamp.Local().Format("15:04:05"),
 	)
 }
 
@@ -99,20 +101,6 @@ func (m listenModel) ViewList() string {
 }
 
 func (m listenModel) View() string {
-	// style := lipgloss.NewStyle().
-	// 	Margin(1, 1).
-	// 	Width(60)
-
-	// var s string
-	// for i, item := range m.list {
-	// 	selStr := " "
-	// 	itemStr := item.hwaddr.String() + " " + fmt.Sprintf("%x", item.xid) + "\n"
-	// 	if i == m.selection {
-	// 		selStr = ">"
-	// 	}
-	// 	s += selStr + " " + itemStr
-	// }
-
 	var s strings.Builder
 	items := m.ViewList()
 	s.WriteString(items)
