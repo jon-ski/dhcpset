@@ -107,28 +107,65 @@ func (m model) UpdateMACListener(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, m.getMac())
 }
 
+func (m model) sendOffer(req SetIPRequest) error {
+	m.ipsetter.Log("Sending offer")
+	err := m.server.Offer(req.MAC, req.IP, req.XID)
+	if err != nil {
+		err = fmt.Errorf("failed to set IP: %w", err)
+		m.ipsetter.Log(err.Error())
+		return err
+	}
+	m.ipsetter.Log("Offer sent successfully")
+	return nil
+}
+
+func (m model) waitRequest(req SetIPRequest) error {
+	m.ipsetter.Log("Listening for request from device")
+	err := m.server.WaitRequest(req.MAC, req.IP, req.XID)
+	if err != nil {
+		err = fmt.Errorf("failed to set IP: %w", err)
+		m.ipsetter.Log(err.Error())
+		return err
+	}
+	m.ipsetter.Log("Request received")
+	return nil
+}
+
+func (m model) sendAck(req SetIPRequest) error {
+	m.ipsetter.Log("Sending ACK packet")
+	err := m.server.Ack(req.MAC, req.IP, req.XID)
+	if err != nil {
+		err = fmt.Errorf("failed to set IP: %w", err)
+		m.ipsetter.Log(err.Error())
+		return err
+	}
+	m.ipsetter.Log("ACK sent successfully")
+	return nil
+}
+
 func (m model) UpdateIPInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case SetIPRequest:
 		log.Debug("msg: SetIPRequest")
 		log.Debug("setting IP: ", "details", msg)
+		m.ipsetter.pendLog.Item(NewSetIPLogMsg(fmt.Sprintf("Sending Offer to %v", msg.MAC)))
 		return m, func() tea.Msg {
-			err := m.server.OfferRequest(msg.MAC, msg.IP, msg.XID)
+			err := m.sendOffer(msg)
 			if err != nil {
-				log.Errorf("failed to set IP: %v", err)
-				return SetIPResult{fmt.Errorf("failed to set IP: %w", err)}
+				return SetIPResult{err}
 			}
+			err = m.waitRequest(msg)
+			if err != nil {
+				return SetIPResult{err}
+			}
+			err = m.sendAck(msg)
+			if err != nil {
+				return SetIPResult{err}
+			}
+			m.ipsetter.Log("IP set successfully")
 			return SetIPResult{nil}
 		}
-		// case SetIPResult:
-		// 	log.Debug("msg: SetIPResult")
-		// 	switch msg {
-		// 	case nil:
-		// 		log.Debug("Offer Sent Successfully")
-		// 	default:
-		// 		log.Errorf("failed to set IP: %v", msg)
-		// 	}
 	}
 
 	m.ipsetter, cmd = m.ipsetter.Update(msg)
