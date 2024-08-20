@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/list"
 	"github.com/jon-ski/dhcpset/internal/styles"
 	"github.com/jon-ski/dhcpset/internal/tui/ipinput"
 )
@@ -17,6 +19,7 @@ type IPSetter struct {
 	txid    uint32
 	ipinput ipinput.Model
 	result  SetIPResult
+	pendLog *list.List
 }
 
 func NewIPSetter() IPSetter {
@@ -30,6 +33,7 @@ func NewIPSetter() IPSetter {
 		hwaddr:  nil,
 		txid:    0,
 		ipinput: ipinput,
+		pendLog: list.New(),
 	}
 }
 
@@ -59,7 +63,11 @@ func (m IPSetter) updatePending(msg tea.Msg) (IPSetter, tea.Cmd) {
 	switch msg := msg.(type) {
 	case SetIPResult:
 		m.result = msg
-		m.state = 2
+		// m.state = 2
+		m.Log("Press q to quit...")
+
+	case SetIPLogMsg:
+		m.pendLog.Item(msg.String())
 	}
 	return m, nil
 }
@@ -87,7 +95,6 @@ func (m IPSetter) Update(msg tea.Msg) (IPSetter, tea.Cmd) {
 
 func (m IPSetter) viewInfo() string {
 	var s strings.Builder
-	s.WriteString("Setting IP Address\n\n")
 	s.WriteString("Mac Address: ")
 	s.WriteString(
 		lipgloss.NewStyle().
@@ -116,7 +123,8 @@ func (m IPSetter) viewPending() string {
 			Render(m.ipinput.Value().String()),
 	)
 	s.WriteString("\n\n")
-	s.WriteString("Sending DHCP Offer...")
+	s.WriteString(m.pendLog.String())
+	// s.WriteString("Sending DHCP Offer...")
 	return s.String()
 }
 
@@ -184,4 +192,28 @@ type SetIPRequest struct {
 
 type SetIPResult struct {
 	err error
+}
+
+type SetIPLogMsg struct {
+	tstamp time.Time
+	msg    string
+}
+
+func NewSetIPLogMsg(msg string) SetIPLogMsg {
+	return SetIPLogMsg{
+		tstamp: time.Now(),
+		msg:    msg,
+	}
+}
+
+func (m SetIPLogMsg) String() string {
+	return fmt.Sprintf(
+		"%s | %s",
+		m.tstamp.Local().Format("15:04:05"),
+		m.msg,
+	)
+}
+
+func (m *IPSetter) Log(msg string) {
+	m.pendLog.Item(NewSetIPLogMsg(msg))
 }
