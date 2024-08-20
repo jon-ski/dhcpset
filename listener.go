@@ -2,10 +2,13 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/list"
+	"github.com/jon-ski/dhcpset/internal/styles"
 )
 
 type listenModel struct {
@@ -61,23 +64,65 @@ func (m listenModel) Update(msg tea.Msg) (listenModel, tea.Cmd) {
 	return m, cmd
 }
 
-func (m listenModel) View() string {
-	style := lipgloss.NewStyle().
-		Margin(1, 1).
-		Width(60)
-
-	var s string
-	for i, item := range m.list {
-		selStr := " "
-		itemStr := item.hwaddr.String() + " " + fmt.Sprintf("%x", item.xid) + "\n"
-		if i == m.selection {
-			selStr = ">"
+func (m listenModel) ListEnumerator() list.Enumerator {
+	return func(l list.Items, i int) string {
+		if m.selection == i {
+			return "Use →"
 		}
-		s += selStr + " " + itemStr
+		return ""
 	}
-	s += "\n" + m.spinner.View() + " Listening for MAC discover packets..."
+}
 
-	return style.Render(s) + "\n"
+func (m listenModel) ViewItem(i int) string {
+	if i < 0 || i >= len(m.list) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"%s %08x",
+		m.list[i].hwaddr.String(),
+		m.list[i].xid,
+	)
+}
+
+var listenEnumeratorStyle = lipgloss.NewStyle().
+	Foreground(styles.Primary()).
+	MarginRight(1)
+
+func (m listenModel) ViewList() string {
+	l := list.New()
+	for i := range m.list {
+		l.Item(m.ViewItem(i))
+	}
+	l.Enumerator(m.ListEnumerator())
+	l.EnumeratorStyle(listenEnumeratorStyle)
+	return l.String()
+}
+
+func (m listenModel) View() string {
+	// style := lipgloss.NewStyle().
+	// 	Margin(1, 1).
+	// 	Width(60)
+
+	// var s string
+	// for i, item := range m.list {
+	// 	selStr := " "
+	// 	itemStr := item.hwaddr.String() + " " + fmt.Sprintf("%x", item.xid) + "\n"
+	// 	if i == m.selection {
+	// 		selStr = ">"
+	// 	}
+	// 	s += selStr + " " + itemStr
+	// }
+
+	var s strings.Builder
+	items := m.ViewList()
+	s.WriteString(items)
+	if len(items) != 0 {
+		s.WriteString("\n\n")
+	}
+	s.WriteString(m.spinner.View())
+	s.WriteString("Listening for DHCP discover packets...")
+
+	return s.String()
 }
 
 type discoverInfoSelection discoverInfo

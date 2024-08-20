@@ -13,6 +13,11 @@ import (
 	"github.com/jon-ski/dhcpset/pkg/dhcp"
 )
 
+type window struct {
+	width  int
+	height int
+}
+
 type model struct {
 	cfg              config
 	server           *dhcp.Server
@@ -34,6 +39,8 @@ type model struct {
 	// help
 	keys keyMap
 	help help.Model
+
+	window window
 }
 
 func newModel(cfg config, server *dhcp.Server) model {
@@ -122,9 +129,23 @@ func (m model) UpdateIPInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m model) updateWindow(msg tea.Msg) (model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.window.width = msg.Width
+		m.window.height = msg.Height
+	}
+
+	return m, cmd
+}
+
 // bubbletea update function
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+
+	m, cmd = m.updateWindow(msg)
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
@@ -147,28 +168,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 const titleText = `
-____  __  ____________  _____ ____________
-/ __ \/ / / / ____/ __ \/ ___// ____/_  __/
-/ / / / /_/ / /   / /_/ /\__ \/ __/   / /   
-/ /_/ / __  / /___/ ____/___/ / /___  / /    
-/_____/_/ /_/\____/_/    /____/_____/ /_/     
-										   
+██████╗ ██╗  ██╗ ██████╗██████╗ ███████╗███████╗████████╗
+██╔══██╗██║  ██║██╔════╝██╔══██╗██╔════╝██╔════╝╚══██╔══╝
+██║  ██║███████║██║     ██████╔╝███████╗█████╗     ██║   
+██║  ██║██╔══██║██║     ██╔═══╝ ╚════██║██╔══╝     ██║   
+██████╔╝██║  ██║╚██████╗██║     ███████║███████╗   ██║   
+╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚═╝     ╚══════╝╚══════╝   ╚═╝   
 `
 
+var titleStyle = lipgloss.NewStyle()
+var listenStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder())
+
 func (m model) View() string {
-	header := titleText
+	header := lipgloss.PlaceHorizontal(m.window.width, lipgloss.Center, titleStyle.Render(titleText)) + "\n"
 
 	var s string
 	switch m.state {
 	case 0:
-		s += m.lModel.View()
+		listenText := m.lModel.View()
+		listenText = listenStyle.Width(m.window.width - 2).
+			Render(listenText)
+		s += lipgloss.PlaceHorizontal(
+			m.window.width, lipgloss.Center, listenText,
+		)
+		s += "\n"
 
 	case 1:
 		s += m.ipsetter.View() + "\n\n"
 	}
 
 	// Help view
-	helpView := m.help.View(m.keys) + "\n"
+	s += "\n"
+	helpView := lipgloss.PlaceHorizontal(m.window.width, lipgloss.Left, m.help.View(m.keys))
 
-	return header + s + helpView
+	return header + s + helpView + "\n"
 }

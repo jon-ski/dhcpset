@@ -151,7 +151,7 @@ func main() {
 	m.discoverChan = sniffMacs(s, m.stopChan)
 
 	// Run the UI
-	p := tea.NewProgram(m)
+	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err = p.Run()
 	if err != nil {
 		log.Fatalf("failed to run program: %v", err)
