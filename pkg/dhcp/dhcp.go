@@ -92,20 +92,6 @@ func (s *Server) newOffer(hwAddr net.HardwareAddr, ip net.IP, xid uint32) *pkt.P
 }
 
 func (l *Server) Offer(hwAddr net.HardwareAddr, ip net.IP, xid uint32) error {
-	// // Sniff until we see the hwAddr, then extract the xid
-	// slog.Debug("listening for hardware address", slog.String("addr", hwAddr.String()))
-	// for {
-	// 	pkt, err := l.Read()
-	// 	if err != nil {
-	// 		return fmt.Errorf("failed to read packet: %w", err)
-	// 	}
-	// 	// Compare the MAC address
-	// 	if slices.Equal(pkt.Header.CHAddr[:6], hwAddr) {
-	// 		xid = pkt.Header.XID
-	// 		slog.Debug("found MAC address", "mac", hwAddr.String(), "xid", xid)
-	// 		break
-	// 	}
-	// }
 	pkt := l.newOffer(hwAddr, ip, xid)
 	slog.Debug("sending offer", "packet", pkt)
 	return l.Write(pkt)
@@ -126,6 +112,32 @@ func (s *Server) newAck(hwAddr net.HardwareAddr, ip net.IP, xid uint32) *pkt.Pkt
 	req.Options.Add(pkt.NewOptionSubnetMask(net.IPv4Mask(255, 255, 255, 0)))
 	req.Options.Add(pkt.NewOptionEnd())
 	return req
+}
+
+func (s *Server) WaitRequest(hwAddr net.HardwareAddr, ip net.IP, xid uint32) error {
+	// Read until we see the request
+	const opCode = 0x01 // Request
+	slog.Debug("listening for request")
+	for {
+		pkt, err := s.Read()
+		if err != nil {
+			return fmt.Errorf("failed to read packet: %w", err)
+		}
+		slog.Debug("received packet", "packet", pkt)
+		if pkt.Header.OpCode == opCode && pkt.Header.XID == xid {
+			slog.Debug("received request", "packet", pkt)
+			break
+		}
+	}
+	return nil
+}
+
+func (s *Server) Ack(hwAddr net.HardwareAddr, ip net.IP, xid uint32) error {
+	// Send the ACK
+	slog.Debug("creating ack")
+	pkt := s.newAck(hwAddr, ip, xid)
+	slog.Debug("sending ack", "packet", pkt)
+	return s.Write(pkt)
 }
 
 func (s *Server) OfferRequest(hwAddr net.HardwareAddr, ip net.IP, xid uint32) error {
