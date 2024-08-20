@@ -1,6 +1,6 @@
 module github.com/jon-ski/dhcpset
 
-go 1.23.0
+go 1.23
 
 require (
 	github.com/charmbracelet/bubbles v0.18.0
