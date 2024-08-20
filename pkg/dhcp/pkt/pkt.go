@@ -14,6 +14,7 @@ import (
 
 const (
 	MessageTypeOffer = 2
+	MessageTypeAck   = 5
 )
 
 var dhcpMagicCookie = []byte{0x63, 0x82, 0x53, 0x63}

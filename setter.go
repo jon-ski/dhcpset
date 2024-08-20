@@ -172,12 +172,14 @@ func (m *IPSetter) SetIP() tea.Msg {
 	return SetIPRequest{
 		IP:  m.ipinput.Value(),
 		MAC: m.hwaddr,
+		XID: m.txid,
 	}
 }
 
 type SetIPRequest struct {
 	IP  net.IP
 	MAC net.HardwareAddr
+	XID uint32
 }
 
 type SetIPResult struct {

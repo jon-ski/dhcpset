@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"slices"
 
 	"github.com/jon-ski/dhcpset/pkg/dhcp/pkt"
 )
@@ -54,13 +53,13 @@ func (l *Server) Read() (*pkt.Pkt, error) {
 	return pkt.NewFromBytes(buf[:n])
 }
 
-func (s *Server) SniffMac() (net.HardwareAddr, error) {
+func (s *Server) SniffMac() (net.HardwareAddr, uint32, error) {
 	pkt, err := s.Read()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read packet: %w", err)
+		return nil, 0, fmt.Errorf("failed to read packet: %w", err)
 	}
 	slog.Debug("sniffed MAC address", "mac", pkt.Header.CHAddr[:6])
-	return pkt.Header.CHAddr[:6], nil
+	return pkt.Header.CHAddr[:6], pkt.Header.XID, nil
 }
 
 func (l *Server) Write(pkt *pkt.Pkt) error {
@@ -92,26 +91,70 @@ func (s *Server) newOffer(hwAddr net.HardwareAddr, ip net.IP, xid uint32) *pkt.P
 	return req
 }
 
-func (l *Server) Offer(hwAddr net.HardwareAddr, ip net.IP) error {
-	var xid uint32
-
-	// Sniff until we see the hwAddr, then extract the xid
-	slog.Debug("listening for hardware address", slog.String("addr", hwAddr.String()))
-	for {
-		pkt, err := l.Read()
-		if err != nil {
-			return fmt.Errorf("failed to read packet: %w", err)
-		}
-		// Compare the MAC address
-		if slices.Equal(pkt.Header.CHAddr[:6], hwAddr) {
-			xid = pkt.Header.XID
-			slog.Debug("found MAC address", "mac", hwAddr.String(), "xid", xid)
-			break
-		}
-	}
+func (l *Server) Offer(hwAddr net.HardwareAddr, ip net.IP, xid uint32) error {
+	// // Sniff until we see the hwAddr, then extract the xid
+	// slog.Debug("listening for hardware address", slog.String("addr", hwAddr.String()))
+	// for {
+	// 	pkt, err := l.Read()
+	// 	if err != nil {
+	// 		return fmt.Errorf("failed to read packet: %w", err)
+	// 	}
+	// 	// Compare the MAC address
+	// 	if slices.Equal(pkt.Header.CHAddr[:6], hwAddr) {
+	// 		xid = pkt.Header.XID
+	// 		slog.Debug("found MAC address", "mac", hwAddr.String(), "xid", xid)
+	// 		break
+	// 	}
+	// }
 	pkt := l.newOffer(hwAddr, ip, xid)
 	slog.Debug("sending offer", "packet", pkt)
 	return l.Write(pkt)
+}
+
+func (s *Server) newAck(hwAddr net.HardwareAddr, ip net.IP, xid uint32) *pkt.Pkt {
+	const opCode = 0x02 // Ack
+	const htype = 0x01  // Ethernet
+
+	req := s.newPkt()
+	req.Header.OpCode = opCode
+	req.Header.XID = xid
+	req.Header.YIAddr = [4]byte(ip.To4())
+	req.Header.SIAddr = [4]byte(s.addr.To4())
+	req.SetCHAddr(hwAddr)
+	req.Options.Add(pkt.NewOptionMessageType(pkt.MessageTypeAck))
+	req.Options.Add(pkt.NewOptionServerID(s.addr.To4()))
+	req.Options.Add(pkt.NewOptionSubnetMask(net.IPv4Mask(255, 255, 255, 0)))
+	req.Options.Add(pkt.NewOptionEnd())
+	return req
+}
+
+func (s *Server) OfferRequest(hwAddr net.HardwareAddr, ip net.IP, xid uint32) error {
+	err := s.Offer(hwAddr, ip, xid)
+	if err != nil {
+		return fmt.Errorf("failed to send offer: %w", err)
+	}
+	slog.Debug("Offer sent")
+
+	// Read until we see the request
+	const opCode = 0x01 // Request
+	slog.Debug("listening for request")
+	for {
+		pkt, err := s.Read()
+		if err != nil {
+			return fmt.Errorf("failed to read packet: %w", err)
+		}
+		slog.Debug("received packet", "packet", pkt)
+		if pkt.Header.OpCode == opCode && pkt.Header.XID == xid {
+			slog.Debug("received request", "packet", pkt)
+			break
+		}
+	}
+
+	// Send the ACK
+	slog.Debug("creating ack")
+	pkt := s.newAck(hwAddr, ip, xid)
+	slog.Debug("sending ack", "packet", pkt)
+	return s.Write(pkt)
 }
 
 func (s *Server) newPkt() *pkt.Pkt {

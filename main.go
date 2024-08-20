@@ -148,7 +148,7 @@ func main() {
 	m := newModel(cfg, s)
 
 	log.Debug("listening for discover packets")
-	m.macChan = sniffMacs(s, m.stopChan)
+	m.discoverChan = sniffMacs(s, m.stopChan)
 
 	// Run the UI
 	p := tea.NewProgram(m)
@@ -158,8 +158,13 @@ func main() {
 	}
 }
 
-func sniffMacs(s *dhcp.Server, stop chan struct{}) chan net.HardwareAddr {
-	macs := make(chan net.HardwareAddr)
+type discoverInfo struct {
+	hwaddr net.HardwareAddr
+	xid    uint32
+}
+
+func sniffMacs(s *dhcp.Server, stop chan struct{}) chan discoverInfo {
+	info := make(chan discoverInfo)
 	go func() {
 		for {
 			// if running, continue. If stopped, break
@@ -170,13 +175,13 @@ func sniffMacs(s *dhcp.Server, stop chan struct{}) chan net.HardwareAddr {
 			default:
 			}
 
-			mac, err := s.SniffMac()
+			mac, xid, err := s.SniffMac()
 			if err != nil {
 				log.Errorf("failed to sniff MAC: %v", err)
 				continue
 			}
 			log.Debugf("new MAC: %v", mac)
-			macs <- mac
+			info <- discoverInfo{mac, xid}
 
 			// // Test Code
 			// log.Debug("sending test MAC")
@@ -184,7 +189,7 @@ func sniffMacs(s *dhcp.Server, stop chan struct{}) chan net.HardwareAddr {
 			// time.Sleep(5 * time.Second)
 		}
 	}()
-	return macs
+	return info
 }
 
 type keyMap struct {

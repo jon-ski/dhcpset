@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -15,11 +14,11 @@ import (
 )
 
 type model struct {
-	cfg         config
-	server      *dhcp.Server
-	macChan     chan net.HardwareAddr
-	macSelected net.HardwareAddr
-	stopChan    chan struct{}
+	cfg              config
+	server           *dhcp.Server
+	discoverChan     chan discoverInfo
+	selectedDiscover discoverInfo
+	stopChan         chan struct{}
 
 	lModel listenModel
 
@@ -58,7 +57,7 @@ func newModel(cfg config, server *dhcp.Server) model {
 
 func (m model) getMac() tea.Cmd {
 	return func() tea.Msg {
-		mac := <-m.macChan
+		mac := <-m.discoverChan
 		return mac
 	}
 }
@@ -74,20 +73,20 @@ func (m model) Init() tea.Cmd {
 func (m model) UpdateMACListener(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
-	case macSelection:
+	case discoverInfoSelection:
 		log.Debug("msg: macSelection")
 		m.state = 1
-		m.macSelected = net.HardwareAddr(msg)
-		log.Debug("selected MAC: ", m.macSelected)
+		m.selectedDiscover = discoverInfo(msg)
+		log.Debug("selected MAC: ", m.selectedDiscover)
 		log.Debug("sending stop signal")
-		m.ipsetter.SetHwAddr(m.macSelected)
-		m.ipsetter.SetTXID(0) // TODO: set txid
+		m.ipsetter.SetHwAddr(m.selectedDiscover.hwaddr)
+		m.ipsetter.SetTXID(m.selectedDiscover.xid)
 		go func() {
 			m.stopChan <- struct{}{}
 		}()
 		return m, cmd
-	case net.HardwareAddr:
-		log.Debug("msg: net.HardwareAddr")
+	case discoverInfo:
+		log.Debug("msg: discoverInfo")
 		m.lModel.list = append(m.lModel.list, msg)
 		return m, m.getMac()
 	}
@@ -102,7 +101,7 @@ func (m model) UpdateIPInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		log.Debug("msg: SetIPRequest")
 		log.Debug("setting IP: ", "details", msg)
 		return m, func() tea.Msg {
-			err := m.server.Offer(msg.MAC, msg.IP)
+			err := m.server.OfferRequest(msg.MAC, msg.IP, msg.XID)
 			if err != nil {
 				log.Errorf("failed to set IP: %v", err)
 				return SetIPResult{fmt.Errorf("failed to set IP: %w", err)}

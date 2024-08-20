@@ -1,7 +1,7 @@
 package main
 
 import (
-	"net"
+	"fmt"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -9,9 +9,9 @@ import (
 )
 
 type listenModel struct {
-	list      []net.HardwareAddr
+	list      []discoverInfo
 	selection int
-	value     net.HardwareAddr
+	value     discoverInfo
 
 	spinner spinner.Model
 }
@@ -22,9 +22,9 @@ func newListenModel() listenModel {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	return listenModel{
-		list:      []net.HardwareAddr{},
+		list:      []discoverInfo{},
 		selection: 0,
-		value:     nil,
+		value:     discoverInfo{},
 		spinner:   s,
 	}
 }
@@ -51,7 +51,7 @@ func (m listenModel) Update(msg tea.Msg) (listenModel, tea.Cmd) {
 
 		case "enter":
 			m.value = m.list[m.selection]
-			return m, cmdMacSelection(m.value)
+			return m, selectMacCommand(m.value)
 		}
 	}
 
@@ -69,7 +69,7 @@ func (m listenModel) View() string {
 	var s string
 	for i, item := range m.list {
 		selStr := " "
-		itemStr := item.String() + "\n"
+		itemStr := item.hwaddr.String() + " " + fmt.Sprintf("%x", item.xid) + "\n"
 		if i == m.selection {
 			selStr = ">"
 		}
@@ -80,10 +80,10 @@ func (m listenModel) View() string {
 	return style.Render(s) + "\n"
 }
 
-type macSelection net.HardwareAddr
+type discoverInfoSelection discoverInfo
 
-func cmdMacSelection(value net.HardwareAddr) tea.Cmd {
+func selectMacCommand(value discoverInfo) tea.Cmd {
 	return func() tea.Msg {
-		return macSelection(value)
+		return discoverInfoSelection(value)
 	}
 }
