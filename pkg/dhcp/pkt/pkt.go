@@ -22,7 +22,7 @@ var dhcpMagicCookie = []byte{0x63, 0x82, 0x53, 0x63}
 var ErrInvalidPacket = errors.New("invalid packet")
 
 // Header represents the BOOTP header
-// fixed legnth
+// fixed length
 type Header struct {
 	OpCode uint8
 	HType  uint8
