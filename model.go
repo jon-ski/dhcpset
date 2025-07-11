@@ -18,6 +18,14 @@ type window struct {
 	height int
 }
 
+type state int
+
+const (
+	state_listen state = iota
+	state_form
+	state_set
+)
+
 type model struct {
 	cfg              config
 	server           *dhcp.Server
@@ -29,11 +37,11 @@ type model struct {
 
 	ipsetter IPSetter
 
-	// state of program
+	// Program state
 	// 0 = listening for packets
 	// 1 = New IP Address form
-	// 2 = Setting IP Address
-	state int
+	// 2 = Setting IP Address (unused)
+	state state
 
 	// For the UI
 	// help
@@ -82,7 +90,7 @@ func (m model) UpdateMACListener(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case discoverInfoSelection:
 		log.Debug("msg: macSelection")
-		m.state = 1
+		m.state = state_form
 		m.selectedDiscover = discoverInfo(msg)
 		log.Debug("selected MAC: ", m.selectedDiscover)
 		log.Debug("sending stop signal")
@@ -200,10 +208,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.state {
-	case 0:
+	case state_listen:
 		return m.UpdateMACListener(msg)
 
-	case 1:
+	case state_form:
 		return m.UpdateIPInput(msg)
 	}
 
@@ -234,7 +242,7 @@ func (m model) View() string {
 
 	var s string
 	switch m.state {
-	case 0:
+	case state_listen:
 		listenText := m.lModel.View()
 		listenText = listenStyle.Width(m.window.width - 2).
 			Render(listenText)
@@ -243,7 +251,7 @@ func (m model) View() string {
 		)
 		s += "\n"
 
-	case 1:
+	case state_form:
 		s += m.ipsetter.View() + "\n\n"
 	}
 
