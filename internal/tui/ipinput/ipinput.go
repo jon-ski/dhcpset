@@ -68,7 +68,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					break
 				}
 				v := m.inputs[m.focused].input.Value()
-				m.inputs[m.focused].input.SetValue(v[0:])
+				if len(v) > 0 {
+					m.inputs[m.focused].input.SetValue(v[:len(v)-1])
+				}
 			}
 		}
 		if msg.String()[0] >= '0' && msg.String()[0] <= '9' {
