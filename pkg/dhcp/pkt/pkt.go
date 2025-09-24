@@ -36,9 +36,10 @@ const (
 var dhcpMagicCookie = []byte{0x63, 0x82, 0x53, 0x63}
 
 var ErrInvalidPacket = errors.New("invalid packet")
+var ErrBadMagicCookie = errors.New("invalid dhcp magic cookie")
 
-// Header represents the BOOTP header
-// fixed length
+// Header represents the fixed-length BOOTP header (236 bytes) plus the DHCP
+// magic cookie (4 bytes), which this struct includes in the Cookie field.
 type Header struct {
 	OpCode uint8
 	HType  uint8
@@ -57,8 +58,7 @@ type Header struct {
 	Cookie [4]byte   // magic cookie
 }
 
-// DHCPOptions represents the DHCP options
-// variable length
+// Options represents the variable-length DHCP options area.
 type Options struct {
 	Options []Option
 }
@@ -92,6 +92,7 @@ func (o *Option) MarshalBinary() ([]byte, error) {
 	return buf, nil
 }
 
+// Decode reads DHCP options from the provided reader until it encounters an End option.
 func (o *Options) Decode(r io.Reader) error {
 	for {
 		var opt Option
@@ -115,7 +116,7 @@ func (o *Option) Decode(r io.Reader) error {
 	}
 	o.Type = code[0]
 	// Handle Pad and End which have no length nor data
-	if o.Type == 0 { // Pad
+	if o.Type == optPad { // Pad
 		o.Length = 0
 		o.Data = nil
 		return nil
@@ -158,10 +159,19 @@ func NewFromBytes(b []byte) (*Pkt, error) {
 	return pkt, nil
 }
 
+// UnmarshalBinary parses a raw DHCP packet into Header and Options, validating
+// the DHCP magic cookie and reading options starting at byte offset 240.
 func (p *Pkt) UnmarshalBinary(b []byte) error {
+	if len(b) < 240 {
+		return fmt.Errorf("%w: too short (%d bytes)", ErrInvalidPacket, len(b))
+	}
+
 	err := binary.Read(packetreader.NewReader(b), binary.BigEndian, &p.Header)
 	if err != nil {
 		return fmt.Errorf("failed to read header: %w", err)
+	}
+	if !bytes.Equal(p.Header.Cookie[:], dhcpMagicCookie) {
+		return ErrBadMagicCookie
 	}
 
 	// Decode options
@@ -173,8 +183,11 @@ func (p *Pkt) UnmarshalBinary(b []byte) error {
 	return nil
 }
 
+// MarshalBinary serializes the Header and Options into a raw DHCP packet.
+// It ensures the DHCP magic cookie is set in the header.
 func (p *Pkt) MarshalBinary() ([]byte, error) {
 	var buf bytes.Buffer
+	copy(p.Header.Cookie[:], dhcpMagicCookie)
 	err := binary.Write(&buf, binary.BigEndian, &p.Header)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write header: %w", err)
@@ -208,7 +221,7 @@ func (p *Pkt) PrintMAC() string {
 func (p *Pkt) PrintName() string {
 	// Get name from options
 	for _, opt := range p.Options.Options {
-		if opt.Type == 12 && opt.Length > 0 {
+		if opt.Type == optHostName && opt.Length > 0 {
 			return string(opt.Data)
 		}
 	}
@@ -225,25 +238,53 @@ func (p *Pkt) SetCHAddr(addr net.HardwareAddr) {
 	copy(p.Header.CHAddr[:], addr)
 }
 
-func (o *Options) Add(opt Option) {
+// Add appends an option without altering existing ones.
+func (o *Options) Add(opt Option) { o.Options = append(o.Options, opt) }
+
+// Set replaces all options matching the same Type, then appends the provided option once.
+func (o *Options) Set(opt Option) {
+	// Remove all of that type
+	filtered := o.Options[:0]
+	for i := range o.Options {
+		if o.Options[i].Type != opt.Type {
+			filtered = append(filtered, o.Options[i])
+		}
+	}
+	o.Options = filtered
+	// Append the new one
 	o.Options = append(o.Options, opt)
 }
 
-func NewOptionMessageType(t uint8) Option {
-	return Option{
-		Type:   53,
-		Length: 1,
-		Data:   []byte{t},
+// AddOrReplace updates the first option of the same Type in-place, or adds it if not present.
+func (o *Options) AddOrReplace(opt Option) {
+	for i := range o.Options {
+		if o.Options[i].Type == opt.Type {
+			o.Options[i] = opt
+			return
+		}
 	}
+	o.Options = append(o.Options, opt)
 }
 
-func NewOptionServerID(ip net.IP) Option {
-	return Option{
-		Type:   54,
-		Length: 4,
-		Data:   []byte(ip.To4()),
+// Remove deletes all options of the given code and returns how many were removed.
+func (o *Options) Remove(code byte) int {
+	count := 0
+	filtered := o.Options[:0]
+	for i := range o.Options {
+		if o.Options[i].Type == code {
+			count++
+			continue
+		}
+		filtered = append(filtered, o.Options[i])
 	}
+	o.Options = filtered
+	return count
 }
+
+func NewOptionMessageType(t uint8) Option { return dhcpOption(optMsgType, []byte{t}) }
+
+// NewOptionServerID is kept for compatibility. Prefer NewServerIDOption.
+func NewOptionServerID(ip net.IP) Option { return NewServerIDOption(ip) }
 
 func NewOptionSubnetMask(mask net.IPMask) Option {
 	return Option{
@@ -253,13 +294,7 @@ func NewOptionSubnetMask(mask net.IPMask) Option {
 	}
 }
 
-func NewOptionEnd() Option {
-	return Option{
-		Type:   0xff,
-		Length: 0,
-		Data:   nil,
-	}
-}
+func NewOptionEnd() Option { return dhcpOption(optEnd, nil) }
 
 func dhcpOption(code byte, data []byte) Option {
 	return Option{
@@ -272,6 +307,23 @@ func dhcpOption(code byte, data []byte) Option {
 func NewServerIDOption(ip net.IP) Option {
 	return dhcpOption(optServerID, ip.To4())
 }
+
+// Convenience setters on packet
+
+// SetMessageType sets DHCP option 53.
+func (p *Pkt) SetMessageType(t uint8) { p.Options.AddOrReplace(NewOptionMessageType(t)) }
+
+// SetServerID sets DHCP option 54.
+func (p *Pkt) SetServerID(ip net.IP) { p.Options.AddOrReplace(NewServerIDOption(ip)) }
+
+// SetSubnetMask sets DHCP option 1.
+func (p *Pkt) SetSubnetMask(mask net.IPMask) { p.Options.AddOrReplace(NewOptionSubnetMask(mask)) }
+
+// SetRouter sets DHCP option 3 (default gateway).
+func (p *Pkt) SetRouter(ip net.IP) { p.Options.AddOrReplace(NewOptionRouter(ip)) }
+
+// SetDNSServers sets DHCP option 6 with one or more IPv4 addresses.
+func (p *Pkt) SetDNSServers(ips ...net.IP) { p.Options.AddOrReplace(NewOptionDNSServers(ips...)) }
 
 // NewOptionLeaseTime creates option 51 with a 32-bit big-endian seconds value
 func NewOptionLeaseTime(seconds uint32) Option {
