@@ -16,6 +16,8 @@ const (
 	MessageTypeOffer        = 2
 	MessageTypeRequest      = 3
 	MessageTypeAck          = 5
+	// DHCP option codes (RFC 2132)
+	optPad             byte = 0
 	optMsgType         byte = 53
 	optServerID        byte = 54
 	optRequestedIP     byte = 50
@@ -27,6 +29,7 @@ const (
 	optRouter          byte = 3
 	optDNSServer       byte = 6
 	optDomainName      byte = 15
+	optHostName        byte = 12
 	optEnd             byte = 255
 )
 
