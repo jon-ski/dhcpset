@@ -1,0 +1,21 @@
+version: '3'
+
+vars:
+  GREETING: Hello, World!
+
+tasks:
+  fmt:
+    cmds:
+      - go fmt ./...
+
+  vet:
+    cmds:
+      - go vet ./...
+
+  build:
+    deps:
+      - fmt
+      - vet
+
+    cmds:
+      - go build -o ./build/

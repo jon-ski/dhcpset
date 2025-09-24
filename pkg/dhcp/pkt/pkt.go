@@ -13,8 +13,21 @@ import (
 )
 
 const (
-	MessageTypeOffer = 2
-	MessageTypeAck   = 5
+	MessageTypeOffer        = 2
+	MessageTypeRequest      = 3
+	MessageTypeAck          = 5
+	optMsgType         byte = 53
+	optServerID        byte = 54
+	optRequestedIP     byte = 50
+	optParamReqList    byte = 55
+	optLeaseTime       byte = 51
+	optRenewalTime     byte = 58
+	optRebindingTime   byte = 59
+	optSubnetMask      byte = 1
+	optRouter          byte = 3
+	optDNSServer       byte = 6
+	optDomainName      byte = 15
+	optEnd             byte = 255
 )
 
 var dhcpMagicCookie = []byte{0x63, 0x82, 0x53, 0x63}
@@ -84,7 +97,7 @@ func (o *Options) Decode(r io.Reader) error {
 			return fmt.Errorf("failed to decode option: %w", err)
 		}
 		o.Options = append(o.Options, opt)
-		if opt.Type == 0xff {
+		if opt.Type == optEnd {
 			break
 		}
 	}
@@ -92,15 +105,35 @@ func (o *Options) Decode(r io.Reader) error {
 }
 
 func (o *Option) Decode(r io.Reader) error {
-	header := make([]byte, 2)
-	_, err := r.Read(header)
-	if err != nil {
+	// Read code first
+	var code [1]byte
+	if _, err := io.ReadFull(r, code[:]); err != nil {
 		return err
 	}
-	o.Type = header[0]
-	o.Length = header[1]
+	o.Type = code[0]
+	// Handle Pad and End which have no length nor data
+	if o.Type == 0 { // Pad
+		o.Length = 0
+		o.Data = nil
+		return nil
+	}
+	if o.Type == optEnd { // End
+		o.Length = 0
+		o.Data = nil
+		return nil
+	}
+	// Read length then data
+	var lb [1]byte
+	if _, err := io.ReadFull(r, lb[:]); err != nil {
+		return err
+	}
+	o.Length = lb[0]
+	if o.Length == 0 {
+		o.Data = nil
+		return nil
+	}
 	o.Data = make([]byte, o.Length)
-	_, err = r.Read(o.Data)
+	_, err := io.ReadFull(r, o.Data)
 	return err
 }
 
@@ -130,7 +163,7 @@ func (p *Pkt) UnmarshalBinary(b []byte) error {
 
 	// Decode options
 	p.Options.Options = make([]Option, 0)
-	err = p.Options.Decode(strings.NewReader(string(b[240:])))
+	err = p.Options.Decode(bytes.NewReader(b[240:]))
 	if err != nil {
 		return fmt.Errorf("failed to decode options: %w", err)
 	}
@@ -211,7 +244,7 @@ func NewOptionServerID(ip net.IP) Option {
 
 func NewOptionSubnetMask(mask net.IPMask) Option {
 	return Option{
-		Type:   1,
+		Type:   optSubnetMask,
 		Length: 4,
 		Data:   []byte(mask),
 	}
@@ -223,4 +256,80 @@ func NewOptionEnd() Option {
 		Length: 0,
 		Data:   nil,
 	}
+}
+
+func dhcpOption(code byte, data []byte) Option {
+	return Option{
+		Type:   code,
+		Length: byte(len(data)),
+		Data:   data,
+	}
+}
+
+func NewServerIDOption(ip net.IP) Option {
+	return dhcpOption(optServerID, ip.To4())
+}
+
+// NewOptionLeaseTime creates option 51 with a 32-bit big-endian seconds value
+func NewOptionLeaseTime(seconds uint32) Option {
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf, seconds)
+	return dhcpOption(optLeaseTime, buf)
+}
+
+// NewOptionRenewalTime creates option 58 (T1)
+func NewOptionRenewalTime(seconds uint32) Option {
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf, seconds)
+	return dhcpOption(optRenewalTime, buf)
+}
+
+// NewOptionRebindingTime creates option 59 (T2)
+func NewOptionRebindingTime(seconds uint32) Option {
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf, seconds)
+	return dhcpOption(optRebindingTime, buf)
+}
+
+// NewOptionRouter creates option 3 with one router
+func NewOptionRouter(ip net.IP) Option {
+	return dhcpOption(optRouter, ip.To4())
+}
+
+// NewOptionDNSServers creates option 6 with one or more IPv4 DNS servers
+func NewOptionDNSServers(ips ...net.IP) Option {
+	b := make([]byte, 0, 4*len(ips))
+	for _, ip := range ips {
+		b = append(b, ip.To4()...)
+	}
+	return dhcpOption(optDNSServer, b)
+}
+
+// Get returns all options of a given code
+func (o *Options) Get(code byte) []Option {
+	var res []Option
+	for _, opt := range o.Options {
+		if opt.Type == code {
+			res = append(res, opt)
+		}
+	}
+	return res
+}
+
+// First returns the first option of a given code
+func (o *Options) First(code byte) (*Option, bool) {
+	for i := range o.Options {
+		if o.Options[i].Type == code {
+			return &o.Options[i], true
+		}
+	}
+	return nil, false
+}
+
+// MessageType extracts DHCP option 53 if present
+func (p *Pkt) MessageType() (byte, bool) {
+	if opt, ok := p.Options.First(optMsgType); ok && len(opt.Data) == 1 {
+		return opt.Data[0], true
+	}
+	return 0, false
 }

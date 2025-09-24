@@ -28,14 +28,11 @@ func NewServer(ipAddr string) (*Server, error) {
 }
 
 func (s *Server) Listen() error {
-	addr, err := net.ResolveUDPAddr("udp", s.addr.To4().String()+":67")
-	if err != nil {
-		return fmt.Errorf("failed to resolve UDP address: %w", err)
-	}
-	s.conn, err = net.ListenUDP("udp", addr)
+	conn, err := listenUDP(s.addr.To4())
 	if err != nil {
 		return fmt.Errorf("failed to listen on UDP: %w", err)
 	}
+	s.conn = conn
 	return nil
 }
 
@@ -81,12 +78,17 @@ func (l *Server) Write(pkt *pkt.Pkt) error {
 func (s *Server) newOffer(hwAddr net.HardwareAddr, ip net.IP, xid uint32) *pkt.Pkt {
 	req := s.newPkt()
 	req.Header.OpCode = 0x02
+	req.Header.HType = 0x01
 	req.Header.XID = xid
 	req.Header.YIAddr = [4]byte(ip.To4())
 	req.SetCHAddr(hwAddr)
 	req.Options.Add(pkt.NewOptionMessageType(pkt.MessageTypeOffer))
 	req.Options.Add(pkt.NewOptionServerID(s.addr.To4()))
 	req.Options.Add(pkt.NewOptionSubnetMask(net.IPv4Mask(255, 255, 255, 0)))
+	// Default timers suitable for embedded devices (customize as needed)
+	req.Options.Add(pkt.NewOptionLeaseTime(3600))     // 1 hour
+	req.Options.Add(pkt.NewOptionRenewalTime(1800))   // T1 30 min
+	req.Options.Add(pkt.NewOptionRebindingTime(3150)) // T2 ~52.5 min
 	req.Options.Add(pkt.NewOptionEnd())
 	return req
 }
@@ -103,6 +105,7 @@ func (s *Server) newAck(hwAddr net.HardwareAddr, ip net.IP, xid uint32) *pkt.Pkt
 
 	req := s.newPkt()
 	req.Header.OpCode = opCode
+	req.Header.HType = htype
 	req.Header.XID = xid
 	req.Header.YIAddr = [4]byte(ip.To4())
 	req.Header.SIAddr = [4]byte(s.addr.To4())
@@ -110,23 +113,31 @@ func (s *Server) newAck(hwAddr net.HardwareAddr, ip net.IP, xid uint32) *pkt.Pkt
 	req.Options.Add(pkt.NewOptionMessageType(pkt.MessageTypeAck))
 	req.Options.Add(pkt.NewOptionServerID(s.addr.To4()))
 	req.Options.Add(pkt.NewOptionSubnetMask(net.IPv4Mask(255, 255, 255, 0)))
+	req.Options.Add(pkt.NewOptionLeaseTime(3600))     // 1 hour
+	req.Options.Add(pkt.NewOptionRenewalTime(1800))   // T1 30 min
+	req.Options.Add(pkt.NewOptionRebindingTime(3150)) // T2 ~52.5 min
 	req.Options.Add(pkt.NewOptionEnd())
 	return req
 }
 
 func (s *Server) WaitRequest(hwAddr net.HardwareAddr, ip net.IP, xid uint32) error {
 	// Read until we see the request
-	const opCode = 0x01 // Request
+	const opCode = 0x01 // BOOTP request from client
 	slog.Debug("listening for request")
 	for {
-		pkt, err := s.Read()
+		p, err := s.Read()
 		if err != nil {
 			return fmt.Errorf("failed to read packet: %w", err)
 		}
-		slog.Debug("received packet", "packet", pkt)
-		if pkt.Header.OpCode == opCode && pkt.Header.XID == xid {
-			slog.Debug("received request", "packet", pkt)
-			break
+		slog.Debug("received packet", "packet", p)
+		// Ensure DHCP Message Type is REQUEST (53=3)
+		if p.Header.OpCode == opCode && p.Header.XID == xid {
+			if t, ok := p.MessageType(); ok && t == pkt.MessageTypeRequest {
+				slog.Debug("received request", "packet", p)
+				break
+			}
+			// Not the DHCPREQUEST we expect; keep listening
+			slog.Debug("ignoring non-DHCPREQUEST with matching XID")
 		}
 	}
 	return nil

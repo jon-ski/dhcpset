@@ -49,11 +49,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		consume := false
 		switch msg.String() {
 		case "tab", "right", ".":
 			m.nextInput()
+			consume = true
 		case "shift+tab", "left":
 			m.prevInput()
+			consume = true
 		case "enter":
 			if m.IsValid() && m.focused == len(m.inputs)-1 {
 				m.inputs[m.focused].Blur()
@@ -84,6 +87,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		if m.isFocused {
 			m.inputs[m.focused].Focus()
+		}
+
+		// Do not propagate navigation keys to child inputs to avoid inserting characters like '0'
+		if consume {
+			for i := range m.inputs {
+				m.inputs[i], _ = m.inputs[i].Update(nil)
+			}
+			return m, nil
 		}
 
 	// We handle errors just like any other message
