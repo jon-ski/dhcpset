@@ -135,11 +135,6 @@ func (o *Option) Decode(r io.Reader) error {
 	}
 	o.Length = lb[0]
 
-	// Validate option length (max 255 bytes)
-	if o.Length > 255 {
-		return fmt.Errorf("invalid option length: %d", o.Length)
-	}
-
 	if o.Length == 0 {
 		o.Data = nil
 		return nil
