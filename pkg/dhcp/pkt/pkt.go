@@ -115,6 +115,7 @@ func (o *Option) Decode(r io.Reader) error {
 		return err
 	}
 	o.Type = code[0]
+
 	// Handle Pad and End which have no length nor data
 	if o.Type == optPad { // Pad
 		o.Length = 0
@@ -126,19 +127,30 @@ func (o *Option) Decode(r io.Reader) error {
 		o.Data = nil
 		return nil
 	}
+
 	// Read length then data
 	var lb [1]byte
 	if _, err := io.ReadFull(r, lb[:]); err != nil {
 		return err
 	}
 	o.Length = lb[0]
+
+	// Validate option length (max 255 bytes)
+	if o.Length > 255 {
+		return fmt.Errorf("invalid option length: %d", o.Length)
+	}
+
 	if o.Length == 0 {
 		o.Data = nil
 		return nil
 	}
+
 	o.Data = make([]byte, o.Length)
 	_, err := io.ReadFull(r, o.Data)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to read option data: %w", err)
+	}
+	return nil
 }
 
 type Pkt struct {
@@ -170,8 +182,30 @@ func (p *Pkt) UnmarshalBinary(b []byte) error {
 	if err != nil {
 		return fmt.Errorf("failed to read header: %w", err)
 	}
+
+	// Validate DHCP magic cookie
 	if !bytes.Equal(p.Header.Cookie[:], dhcpMagicCookie) {
 		return ErrBadMagicCookie
+	}
+
+	// Validate hardware address length
+	if p.Header.HLen > 16 {
+		return fmt.Errorf("%w: invalid hardware address length: %d", ErrInvalidPacket, p.Header.HLen)
+	}
+
+	// Validate opcode
+	if p.Header.OpCode != 0x01 && p.Header.OpCode != 0x02 {
+		return fmt.Errorf("%w: invalid opcode: %d", ErrInvalidPacket, p.Header.OpCode)
+	}
+
+	// Validate hardware type (should be 1 for Ethernet)
+	if p.Header.HType != 0x01 {
+		return fmt.Errorf("%w: unsupported hardware type: %d", ErrInvalidPacket, p.Header.HType)
+	}
+
+	// Validate transaction ID (should not be zero for DHCP)
+	if p.Header.XID == 0 {
+		return fmt.Errorf("%w: invalid transaction ID: %d", ErrInvalidPacket, p.Header.XID)
 	}
 
 	// Decode options

@@ -3,14 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/log"
+	"github.com/jon-ski/dhcpset/internal/logging"
 	"github.com/jon-ski/dhcpset/pkg/dhcp"
 )
 
@@ -106,57 +106,69 @@ func chooseConfig() (c config, err error) {
 }
 
 func main() {
-
-	f, err := tea.LogToFile("debug.log", "dhcpset")
+	// Initialize logging
+	err := logging.Init()
 	if err != nil {
-		log.Fatalf("failed to open log file: %v", err)
+		logging.Fatal("failed to initialize logging", "error", err)
 	}
-	handler := log.New(f)
-	handler.SetOutput(f)
-	handler.SetLevel(log.DebugLevel)
-	handler.SetReportTimestamp(true)
-	handler.SetReportCaller(true)
-	log.SetDefault(handler)
-	logger := slog.New(handler)
-	slog.SetDefault(logger)
-	log.Default().SetLevel(log.DebugLevel)
-	defer f.Close()
+	defer func() {
+		if r := recover(); r != nil {
+			logging.Error("panic recovered", "panic", r)
+		}
+	}()
 
 	// Setup
-	log.Debug("starting setup form")
+	logging.Info("application_started", "version", "1.0.0")
+
 	cfg, err := chooseConfig()
 	if err != nil {
-		log.Fatal(err)
+		logging.Error("failed to choose configuration", "error", err)
+		logging.Fatal("configuration failed")
 	}
-	log.Infof("using interface %v with IP %v", cfg.iface.Name, cfg.addr)
+	logging.LogNetworkOperation("interface_selected", cfg.iface.Name, cfg.addr.String(), nil)
 
 	// Create a listener
-	log.Debug("creating dhcp server")
 	s, err := dhcp.NewServer(cfg.addr.String())
 	if err != nil {
-		log.Fatalf("failed to create server: %v", err)
+		logging.Error("failed to create DHCP server", "error", err)
+		logging.Fatal("server creation failed")
 	}
 	defer s.Close()
 
 	// Listen for packets
-	log.Debug("setting up listener")
 	err = s.Listen()
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		logging.Error("failed to setup listener", "error", err)
+		logging.Fatal("listener setup failed")
 	}
 
 	// model
 	m := newModel(cfg, s)
 
-	log.Debug("listening for discover packets")
+	logging.Info("starting_discover_packet_monitoring")
 	m.discoverChan = sniffMacs(s, m.stopChan)
 
 	// Run the UI
 	p := tea.NewProgram(m, tea.WithAltScreen())
+	logging.Info("starting_ui")
 	_, err = p.Run()
 	if err != nil {
-		log.Fatalf("failed to run program: %v", err)
+		logging.Error("failed to run program", "error", err)
+		logging.Fatal("program execution failed")
 	}
+
+	// Ensure proper cleanup
+	logging.Info("stopping_discover_packet_monitoring")
+	close(m.stopChan)
+
+	// Close the UDP connection to stop any pending reads
+	logging.Info("closing_udp_connection")
+	s.Close()
+
+	// Give the goroutine a moment to clean up
+	time.Sleep(200 * time.Millisecond)
+
+	logging.Info("application_shutdown")
 }
 
 type discoverInfo struct {
@@ -174,29 +186,41 @@ func newDiscoverInfo(hwaddr net.HardwareAddr, xid uint32) discoverInfo {
 }
 
 func sniffMacs(s *dhcp.Server, stop chan struct{}) chan discoverInfo {
-	info := make(chan discoverInfo)
+	info := make(chan discoverInfo, 10) // Add buffer to prevent blocking
 	go func() {
+		logging.Info("mac_sniffing_started")
+		defer logging.Info("mac_sniffing_stopped")
+		defer close(info) // Ensure channel is closed when goroutine exits
+
 		for {
-			// if running, continue. If stopped, break
 			select {
 			case <-stop:
-				log.Debug("stopping MAC sniffing")
+				logging.Info("stopping MAC sniffing")
 				return
 			default:
-			}
+				// Call SniffMac directly - it has its own timeout handling
+				mac, xid, err := s.SniffMac()
+				if err != nil {
+					// Check if this is a connection closed error during shutdown
+					if strings.Contains(err.Error(), "connection closed") {
+						logging.Debug("sniff_mac_connection_closed", "action", "shutting_down")
+						return
+					}
+					logging.Error("failed to sniff MAC", "error", err)
+					// Add exponential backoff for network errors
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
 
-			mac, xid, err := s.SniffMac()
-			if err != nil {
-				log.Errorf("failed to sniff MAC: %v", err)
-				continue
+				logging.LogPacket("received", "discover", mac.String(), "", xid)
+				select {
+				case info <- newDiscoverInfo(mac, xid):
+				case <-stop:
+					return
+				default:
+					logging.Warn("discover_info_channel_full", "dropped_packet", mac.String())
+				}
 			}
-			log.Debugf("new MAC: %v", mac)
-			info <- newDiscoverInfo(mac, xid)
-
-			// // Test Code
-			// log.Debug("sending test MAC")
-			// macs <- net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55}
-			// time.Sleep(5 * time.Second)
 		}
 	}()
 	return info
@@ -206,6 +230,7 @@ type keyMap struct {
 	Up    key.Binding
 	Down  key.Binding
 	Enter key.Binding
+	Retry key.Binding
 
 	Help key.Binding
 
@@ -218,7 +243,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Up, k.Down, k.Enter},
+		{k.Up, k.Down, k.Enter, k.Retry},
 		k.ShortHelp(),
 	}
 }
@@ -237,6 +262,11 @@ var keys = keyMap{
 	Enter: key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "Select"),
+	),
+
+	Retry: key.NewBinding(
+		key.WithKeys("r"),
+		key.WithHelp("r", "Retry"),
 	),
 
 	Help: key.NewBinding(

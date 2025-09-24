@@ -2,14 +2,13 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/log"
-	"github.com/jon-ski/dhcpset/internal/styles"
-	"github.com/jon-ski/dhcpset/internal/tui/ipinput"
+	"github.com/jon-ski/dhcpset/internal/logging"
 	"github.com/jon-ski/dhcpset/pkg/dhcp"
 )
 
@@ -29,9 +28,11 @@ const (
 type model struct {
 	cfg              config
 	server           *dhcp.Server
+	dhcpService      *dhcp.Service
 	discoverChan     chan discoverInfo
 	selectedDiscover discoverInfo
 	stopChan         chan struct{}
+	progressChan     chan dhcp.ProgressUpdate
 
 	lModel listenModel
 
@@ -52,15 +53,16 @@ type model struct {
 }
 
 func newModel(cfg config, server *dhcp.Server) model {
-	ipinput := ipinput.New()
-	ipinput.Prompt = "IP Address"
-	ipinput.Style = ipinput.Style.Border(lipgloss.NormalBorder())
-	ipinput.FocusedForeground = styles.Primary()
-	return model{
-		cfg:    cfg,
-		server: server,
+	// Create DHCP service with logging callback
+	dhcpService := dhcp.NewService(server)
 
-		stopChan: make(chan struct{}),
+	return model{
+		cfg:         cfg,
+		server:      server,
+		dhcpService: dhcpService,
+
+		stopChan:     make(chan struct{}),
+		progressChan: make(chan dhcp.ProgressUpdate, 10),
 
 		lModel:   newListenModel(),
 		ipsetter: NewIPSetter(),
@@ -72,8 +74,25 @@ func newModel(cfg config, server *dhcp.Server) model {
 
 func (m model) getMac() tea.Cmd {
 	return func() tea.Msg {
-		mac := <-m.discoverChan
-		return mac
+		select {
+		case mac := <-m.discoverChan:
+			return mac
+		case <-time.After(100 * time.Millisecond):
+			// Return nil if no message available to prevent blocking
+			return nil
+		}
+	}
+}
+
+func (m model) getProgress() tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case progress := <-m.progressChan:
+			return progress
+		case <-time.After(50 * time.Millisecond):
+			// Return nil if no progress update available
+			return nil
+		}
 	}
 }
 
@@ -89,19 +108,28 @@ func (m model) UpdateMACListener(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case discoverInfoSelection:
-		log.Debug("msg: macSelection")
+		logging.LogUIEvent("mac_selected", "listener", map[string]interface{}{
+			"mac": msg.hwaddr.String(),
+			"xid": msg.xid,
+		})
 		m.state = state_form
 		m.selectedDiscover = discoverInfo(msg)
-		log.Debug("selected MAC: ", m.selectedDiscover)
-		log.Debug("sending stop signal")
 		m.ipsetter.SetHwAddr(m.selectedDiscover.hwaddr)
 		m.ipsetter.SetTXID(m.selectedDiscover.xid)
 		go func() {
-			m.stopChan <- struct{}{}
+			select {
+			case m.stopChan <- struct{}{}:
+				logging.Debug("stop_signal_sent", "reason", "device_selected")
+			case <-time.After(1 * time.Second):
+				logging.Warn("stop_channel_timeout", "channel_full", true)
+			}
 		}()
 		return m, cmd
 	case discoverInfo:
-		log.Debug("msg: discoverInfo")
+		logging.LogUIEvent("discover_received", "listener", map[string]interface{}{
+			"mac": msg.hwaddr.String(),
+			"xid": msg.xid,
+		})
 		for i := range m.lModel.list {
 			if m.lModel.list[i].hwaddr.String() == msg.hwaddr.String() {
 				m.lModel.list[i] = msg
@@ -115,65 +143,51 @@ func (m model) UpdateMACListener(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, m.getMac())
 }
 
-func (m model) sendOffer(req SetIPRequest) error {
-	m.ipsetter.Log("Sending offer")
-	err := m.server.Offer(req.MAC, req.IP, req.XID)
-	if err != nil {
-		err = fmt.Errorf("failed to set IP: %w", err)
-		m.ipsetter.Log(err.Error())
-		return err
-	}
-	m.ipsetter.Log("Offer sent successfully")
-	return nil
-}
-
-func (m model) waitRequest(req SetIPRequest) error {
-	m.ipsetter.Log("Listening for request from device")
-	err := m.server.WaitRequest(req.MAC, req.IP, req.XID)
-	if err != nil {
-		err = fmt.Errorf("failed to set IP: %w", err)
-		m.ipsetter.Log(err.Error())
-		return err
-	}
-	m.ipsetter.Log("Request received")
-	return nil
-}
-
-func (m model) sendAck(req SetIPRequest) error {
-	m.ipsetter.Log("Sending ACK packet")
-	err := m.server.Ack(req.MAC, req.IP, req.XID)
-	if err != nil {
-		err = fmt.Errorf("failed to set IP: %w", err)
-		m.ipsetter.Log(err.Error())
-		return err
-	}
-	m.ipsetter.Log("ACK sent successfully")
-	return nil
-}
-
 func (m model) UpdateIPInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case SetIPRequest:
-		log.Debug("msg: SetIPRequest")
-		log.Debug("setting IP: ", "details", msg)
-		m.ipsetter.pendLog.Item(NewSetIPLogMsg(fmt.Sprintf("Sending Offer to %v", msg.MAC)))
-		return m, func() tea.Msg {
-			err := m.sendOffer(msg)
-			if err != nil {
-				return SetIPResult{err}
+		logging.LogUIEvent("ip_set_requested", "ipsetter", map[string]interface{}{
+			"mac": msg.MAC.String(),
+			"ip":  msg.IP.String(),
+			"xid": msg.XID,
+		})
+
+		// Set up logging callback for the service
+		m.dhcpService.SetLogger(func(logMsg string) {
+			m.ipsetter.Log(logMsg)
+		})
+
+		// Set up progress callback for the service
+		m.dhcpService.SetProgressCallback(func(progress dhcp.ProgressUpdate) {
+			select {
+			case m.progressChan <- progress:
+			default:
+				// Channel full, skip this update and log overflow
+				logging.Warn("progress_channel_overflow", "dropped_updates", 1, "step", progress.Step)
 			}
-			err = m.waitRequest(msg)
-			if err != nil {
-				return SetIPResult{err}
-			}
-			err = m.sendAck(msg)
-			if err != nil {
-				return SetIPResult{err}
-			}
-			m.ipsetter.Log("IP set successfully")
-			return SetIPResult{nil}
-		}
+		})
+
+		m.ipsetter.pendLog.Item(NewSetIPLogMsg(fmt.Sprintf("Starting IP assignment for %v", msg.MAC)))
+		return m, tea.Batch(
+			m.getProgress(),
+			func() tea.Msg {
+				result := m.dhcpService.SetIPAddress(dhcp.SetIPRequest{
+					IP:  msg.IP,
+					MAC: msg.MAC,
+					XID: msg.XID,
+				})
+				return SetIPResult{
+					err:     result.Error,
+					Message: result.Message,
+				}
+			},
+		)
+
+	case dhcp.ProgressUpdate:
+		// Handle progress updates
+		m.ipsetter, cmd = m.ipsetter.Update(msg)
+		return m, tea.Batch(cmd, m.getProgress())
 	}
 
 	m.ipsetter, cmd = m.ipsetter.Update(msg)
@@ -201,6 +215,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.keys.Quit):
+			logging.Info("user_requested_quit", "key", msg.String())
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll

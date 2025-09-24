@@ -13,6 +13,24 @@ type (
 	errMsg error
 )
 
+// Config holds configuration options for the IP input component
+type Config struct {
+	Prompt            string
+	Style             lipgloss.Style
+	FocusedForeground lipgloss.Color
+	Placeholder       string
+}
+
+// DefaultConfig returns a default configuration for the IP input
+func DefaultConfig() Config {
+	return Config{
+		Prompt:            "",
+		Style:             lipgloss.NewStyle(),
+		FocusedForeground: lipgloss.Color("205"),
+		Placeholder:       "0",
+	}
+}
+
 type Model struct {
 	inputs            []OctetInput
 	focused           int
@@ -24,19 +42,25 @@ type Model struct {
 }
 
 func New() Model {
+	return NewWithConfig(DefaultConfig())
+}
+
+func NewWithConfig(config Config) Model {
 	var inputs []OctetInput = make([]OctetInput, 4)
 	for i := range inputs {
 		inputs[i] = NewOctetInput()
+		inputs[i].input.Placeholder = config.Placeholder
 	}
-	// inputs[0].Focus()
 
 	m := Model{
-		inputs:    inputs,
-		focused:   0,
-		isFocused: false,
-		err:       nil,
+		inputs:            inputs,
+		focused:           0,
+		isFocused:         false,
+		err:               nil,
+		Prompt:            config.Prompt,
+		Style:             config.Style,
+		FocusedForeground: config.FocusedForeground,
 	}
-	m.Style = lipgloss.NewStyle()
 	return m
 }
 
@@ -165,11 +189,48 @@ func (m *Model) IsDone() bool {
 }
 
 func (m *Model) IsValid() bool {
+	// First check basic octet validation
 	for i := range m.inputs {
 		if !m.inputs[i].IsValid() {
 			return false
 		}
 	}
+
+	// Additional network-aware validation
+	ip := m.Value()
+	return m.isNetworkValid(ip)
+}
+
+// isNetworkValid performs network-aware validation
+func (m *Model) isNetworkValid(ip net.IP) bool {
+	// Check if IP is in valid range (not 0.0.0.0, 255.255.255.255, etc.)
+	if ip.IsUnspecified() {
+		return false
+	}
+
+	if ip.IsMulticast() {
+		return false
+	}
+
+	if ip.IsLoopback() {
+		return false
+	}
+
+	// Check for broadcast addresses
+	if ip.Equal(net.IPv4(255, 255, 255, 255)) {
+		return false
+	}
+
+	// Check for link-local addresses (169.254.x.x)
+	if ip.To4()[0] == 169 && ip.To4()[1] == 254 {
+		return false
+	}
+
+	// Check for reserved addresses (224.0.0.0 - 239.255.255.255)
+	if ip.To4()[0] >= 224 && ip.To4()[0] <= 239 {
+		return false
+	}
+
 	return true
 }
 
