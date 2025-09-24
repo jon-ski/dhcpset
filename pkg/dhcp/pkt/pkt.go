@@ -13,24 +13,24 @@ import (
 )
 
 const (
-	MessageTypeOffer        = 2
-	MessageTypeRequest      = 3
-	MessageTypeAck          = 5
+	MessageTypeOffer   = 2
+	MessageTypeRequest = 3
+	MessageTypeAck     = 5
 	// DHCP option codes (RFC 2132)
-	optPad             byte = 0
-	optMsgType         byte = 53
-	optServerID        byte = 54
-	optRequestedIP     byte = 50
-	optParamReqList    byte = 55
-	optLeaseTime       byte = 51
-	optRenewalTime     byte = 58
-	optRebindingTime   byte = 59
-	optSubnetMask      byte = 1
-	optRouter          byte = 3
-	optDNSServer       byte = 6
-	optDomainName      byte = 15
-	optHostName        byte = 12
-	optEnd             byte = 255
+	optPad           byte = 0
+	optMsgType       byte = 53
+	optServerID      byte = 54
+	optRequestedIP   byte = 50
+	optParamReqList  byte = 55
+	optLeaseTime     byte = 51
+	optRenewalTime   byte = 58
+	optRebindingTime byte = 59
+	optSubnetMask    byte = 1
+	optRouter        byte = 3
+	optDNSServer     byte = 6
+	optDomainName    byte = 15
+	optHostName      byte = 12
+	optEnd           byte = 255
 )
 
 var dhcpMagicCookie = []byte{0x63, 0x82, 0x53, 0x63}
